@@ -25,8 +25,6 @@ typedef struct file_mapping {
     // size_t real_path_len;
 } f_map;
 
-extern f_map* fmp;
-
 
 
 #endif // DFS_H

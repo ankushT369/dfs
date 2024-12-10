@@ -10,26 +10,35 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-/**
- *  @brief get the attributes of the directory or file
- *
- *  @param path The path is the path of the current 
- *  directory or the file which is getting accessed
- *
- *  @param st The st is the pointer to the struct stat which
- *  the information of the current directory or file
- *
- *  @param fi The fi is the pointer to the fuse_file_info 
- *  currenty unused
- *
- */
+
+/*
+void add_file_mapping(char* virtual_path, char* real_path, f_map* fm) {
+    real_path = realpath(virtual_path, NULL);
+    if (real_path != NULL) {
+        printf("Full path: %s\n", real_path);
+    }
+}
+*/
+
+
+void remove_slash(const char *input, char *output, size_t output_size) {
+    if (strlen(input) < 1 || strlen(input) >= output_size) {
+        fprintf(stderr, "Output buffer is too small or input is invalid!\n");
+        return;
+    }
+
+    strncpy(output, input + 1, output_size - 1);
+    output[output_size - 1] = '\0';
+}
+
 
 /* hard coded for testing */
 f_map fm[] = {
     {"/note.txt", "/home/ankush/exp/note.txt"},
+    {"/Linux Kernel Development, 3rd Edition.pdf", "/home/ankush/linux/pdf/Linux Kernel Development, 3rd Edition.pdf"},
 };
 
-//f_map* fm = NULL;
+// f_map* fm = NULL;
 
 static int dfs_getattr(const char* path, struct stat* st, struct fuse_file_info* fi) {
     (void) fi;
@@ -42,42 +51,21 @@ static int dfs_getattr(const char* path, struct stat* st, struct fuse_file_info*
         return 0;
     }
 
-    if (strcmp(path, fm[0].virtual_path) == 0) {
-        if (access(fm[0].real_path, F_OK) == 0) { // Check if real file exists
-            stat(fm[0].real_path, &file_stat);
-            st->st_mode = S_IFREG | 0444; // Regular file, read-only
-            st->st_nlink = 1;
-            st->st_size = file_stat.st_size; // Simulate file size (optional: use stat on the real file)
-            return 0;
+    for(size_t i = 0; i < sizeof(fm) / sizeof(fm[0]); i++) {
+        if (strcmp(path, fm[i].virtual_path) == 0) {
+            if (access(fm[i].real_path, F_OK) == 0) { 
+                stat(fm[i].real_path, &file_stat);
+                st->st_mode = S_IFREG | 0444;
+                st->st_nlink = 1;
+                st->st_size = file_stat.st_size;
+                return 0;
+            }
         }
     }
 
     return -ENOENT;
 }
 
-/**
- *  @brief reads the directory
- *
- *  @param path The path is the path of the current 
- *  directory or the file which is getting accessed
- *
- *  @param buffer The buffer holds the information
- *  of the directory entries, we use filler function
- *  given by FUSE to add entries
- *
- *  @param filler The filler is the helper function 
- *  provided by FUSE to read the entries
- *
- *  @param offset Indicates the starting point for 
- *  the directory listing
- *
- *  @param fi Contains information about the file or 
- *  directory being accessed
- *
- *  @param flags Flags that may modify the behavior 
- *  of the directory listing
- *
- */
 
 static int dfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, 
                        struct fuse_file_info* fi, enum fuse_readdir_flags flags) {
@@ -88,7 +76,13 @@ static int dfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, o
     if (strcmp(path, "/") == 0) {
         filler(buffer, ".", NULL, 0, 0);
         filler(buffer, "..", NULL, 0, 0);
-        filler(buffer, "note.txt", NULL, 0, 0);
+
+
+        for(size_t i = 0; i < sizeof(fm) / sizeof(fm[0]); i++) {
+            char result[256];
+            remove_slash(fm[i].virtual_path, result, sizeof(result));
+            filler(buffer, result, NULL, 0, 0);
+        }
         return 0;
     }
 
@@ -96,46 +90,22 @@ static int dfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, o
     return -ENOENT;
 }
 
-/**
- *  @brief Opens the file
- *
- *  @param Path is the opened file path
- *
- *  @param fi Contains information about the file or 
- *  directory being accessed
- *
- */
 
 static int dfs_open(const char *path, struct fuse_file_info *fi) {
-    if (strcmp(path, fm[0].virtual_path) == 0)
-        return 0; 
+    for(size_t i = 0; i < sizeof(fm) / sizeof(fm[0]); i++) {
+        if (strcmp(path, fm[i].virtual_path) == 0)
+            return 0; 
+    }
     return -ENOENT;
 }
-
-/**
- *  @brief reads the opened file
- *
- *  @param path The path is the path of the current 
- *  file which is getting accessed
- *
- *  @param buffer The buffer holds the information
- *  of the file entries
- *
- *  @param size is the size to read
- *
- *  @param offset Indicates the starting point for 
- *  the file
- *
- *  @param fi Contains information about the file or 
- *  directory being accessed
- *
- */
 
 static int dfs_read(const char* path, char* buffer, size_t size, off_t offset,
                     struct fuse_file_info* fi) {
     FILE* file = NULL;
-    if(strcmp(path, fm[0].virtual_path) == 0) {
-        file = fopen(fm[0].real_path, "r");
+    for(size_t i = 0; i < sizeof(fm) / sizeof(fm[0]); i++) {
+        if(strcmp(path, fm[i].virtual_path) == 0) {
+            file = fopen(fm[i].real_path, "r");
+        }
     }
 
     if(!file)
@@ -159,17 +129,36 @@ struct fuse_operations ops = {
 int main(int argc, char* argv[]) {
     /*
     int opt;
+    const char *optstring = "f:";
+    char *filename = NULL;
     fm = malloc(sizeof(f_map));
-    while ((opt = getopt(argc, argv, "s:")) != -1) {
+
+    while ((opt = getopt(argc, argv, optstring)) != -1) {
         switch (opt) {
-            case 's':
-                add_file_mapping("/file.txt", "/dir1/file.txt", fm);
+            case 'f': // Handle -f option
+                filename = optarg;
                 break;
-            default:
-                fprintf(stderr, "Usage: %s [-s virtual_file] ...\n", argv[0]);
-                exit(EXIT_FAILURE);
+            case '?': // Invalid option
+                print_usage();
+                return 1;
         }
     }
+
+    if (filename) {
+        printf("Option -f provided with filename: %s\n", filename);
+        char* real_path = NULL;
+        add_file_mapping(filename, real_path, fm);
+        return 0;
+    }
     */
-    fuse_main(argc, argv, &ops, NULL);
+    return fuse_main(argc, argv, &ops, NULL);
+
+    /*
+    if (optind < argc) {
+
+    }
+    */
+
+    //print_usage();
+    return 0;
 }
